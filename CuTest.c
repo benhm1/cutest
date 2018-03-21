@@ -4,8 +4,27 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
 #include "CuTest.h"
+
+static int __expecting_assert_fail = 0;
+static jmp_buf __assert_failed_unexpected;
+static jmp_buf __assert_failed_expected;
+
+void assert(int condition) {
+
+  if (!condition) {
+    if (__expecting_assert_fail) {
+      longjmp(__assert_failed_expected, 1);
+    } else {
+      printf("Unexpected assertion failure!\n");
+      longjmp(__assert_failed_unexpected, 1);
+    }
+  }
+  return;
+}
+
 
 /*-------------------------------------------------------------------------*
  * CuStr
@@ -116,7 +135,6 @@ void CuTestInit(CuTest* t, const char* name, TestFunction function)
 	t->ran = 0;
         t->message = NULL;
 	t->function = function;
-	t->jumpBuf = NULL;
 }
 
 CuTest* CuTestNew(const char* name, TestFunction function)
@@ -136,28 +154,29 @@ void CuTestDelete(CuTest *t)
 
 void CuTestRun(CuTest* tc)
 {
-	jmp_buf buf;
-	tc->jumpBuf = &buf;
-	if (setjmp(buf) == 0)
+	if (setjmp(__assert_failed_unexpected) == 0)
 	{
-		tc->ran = 1;
-		(tc->function)(tc);
+	  tc->ran = 1;
+	  (tc->function)(tc);
 	}
-	tc->jumpBuf = 0;
+	else {
+	  tc->failed = 1;
+	  CuFail_Line(tc, "file", 123, NULL, "unexpected assertion fail");
+	  //printf("In else case of cuTestRun\n");
+	}
 }
 
 static void CuFailInternal(CuTest* tc, const char* file, int line, CuString* string)
 {
 	char buf[HUGE_STRING_LEN];
 
-	sprintf(buf, "%s:%d: ", file, line);
+	//sprintf(buf, "%s:%d: ", file, line);
 	CuStringInsert(string, buf, 0);
 
 	tc->failed = 1;
         free(tc->message);
         tc->message = CuStringNew();
         CuStringAppend(tc->message, string->buffer);
-	if (tc->jumpBuf != 0) longjmp(*(tc->jumpBuf), 0);
 }
 
 void CuFail_Line(CuTest* tc, const char* file, int line, const char* message2, const char* message)
@@ -233,6 +252,97 @@ void CuAssertPtrEquals_LineMsg(CuTest* tc, const char* file, int line, const cha
 	CuFail_Line(tc, file, line, message, buf);
 }
 
+void CuAssertIntArrayEquals_LineMsg(CuTest* tc,
+				    const char* file,
+				    int line,
+				    const char* message,
+				    int* expected,
+				    int* actual,
+				    size_t length) {
+  size_t i;
+  char buf[STRING_MAX];
+  
+  for (i = 0; i < length; i++) {
+    if (expected[i] != actual[i]) {
+      snprintf(buf, STRING_MAX,
+	       "at index %lu expected <%d> but was <%d>",
+	       i, expected[i], actual[i]);
+      CuFail_Line(tc, file, line, message, buf);
+      break;
+    }
+  }
+}
+
+void CuAssertStructEquals_LineMsg(CuTest* tc,
+				  const char* file,
+				  int line,
+				  const char* message,
+				  size_t arrayIndex,
+				  void* expected,
+				  void* actual,
+				  size_t sizeofElem,
+				  char * (*toString)(void *)) {
+
+  char buf[STRING_MAX];
+
+  if (0 != memcmp(expected, actual, sizeofElem)) {
+    if (arrayIndex == SIZE_MAX) {
+      snprintf(buf, STRING_MAX,
+	       "expected <%s> but was <%s>",
+	       toString(expected), toString(actual));
+    }
+    else {
+      snprintf(buf, STRING_MAX,
+	       "at array index %lu expected <%s> but was <%s>",
+	       arrayIndex,
+	       toString(expected), toString(actual));
+    }
+    CuFail_Line(tc, file, line, message, buf);
+  }
+  
+}
+				  
+void CuAssertStructArrayEquals_LineMsg(CuTest* tc,
+				       const char* file,
+				       int line,
+				       const char* message,
+				       void* expected,
+				       void* actual,
+				       size_t numElems,
+				       size_t sizeofElem,
+				       char * (*toString)(void *)) {
+  size_t i;
+  char buf[STRING_MAX];
+  void *expectedIter = expected;
+  void *actualIter = actual;
+  
+  for (i = 0; i < numElems; i++) {
+    if (tc->failed) {
+      break;
+    }
+    CuAssertStructEquals_LineMsg(tc, file, line, message,
+				 i, expectedIter, actualIter,
+				 sizeofElem, toString);
+  }
+  
+}
+
+
+void CuAssertRaises_Line(CuTest* tc,
+			 const char* file,
+			 int line,
+			 const char* message,
+			 void (*fn)(void)) {
+  char buf[STRING_MAX] = {0};
+  int rv = setjmp(__assert_failed_expected);
+  if (!rv) {
+    __expecting_assert_fail = 1;
+    fn();
+    CuFail_Line(tc, file, line, message,
+		"expected assertion failure but didn't get one");
+  }
+  __expecting_assert_fail = 0;
+}
 
 /*-------------------------------------------------------------------------*
  * CuSuite
@@ -286,12 +396,23 @@ void CuSuiteAddSuite(CuSuite* testSuite, CuSuite* testSuite2)
 void CuSuiteRun(CuSuite* testSuite)
 {
 	int i;
+	CuString *output = CuStringNew();
+	
 	for (i = 0 ; i < testSuite->count ; ++i)
 	{
 		CuTest* testCase = testSuite->list[i];
 		CuTestRun(testCase);
-		if (testCase->failed) { testSuite->failCount += 1; }
+		CuStringAppendFormat(output, "%d: %-35s %s\n", i + 1, testCase->name,
+				     (testCase->failed ? "FAIL" : "PASS"));
+		if (testCase->failed) {
+		  testSuite->failCount += 1;
+		  CuStringAppendFormat(output, "\t%s\n", testCase->message->buffer);
+		}
 	}
+
+	//CuSuiteSummary(testSuite, output);
+	//CuSuiteDetails(testSuite, output);
+	printf("%s\n", output->buffer);  
 }
 
 void CuSuiteSummary(CuSuite* testSuite, CuString* summary)
@@ -329,8 +450,8 @@ void CuSuiteDetails(CuSuite* testSuite, CuString* details)
 			if (testCase->failed)
 			{
 				failCount++;
-				CuStringAppendFormat(details, "%d) %s: %s\n",
-					failCount, testCase->name, testCase->message->buffer);
+				CuStringAppendFormat(details, "- %s: %s\n",
+                                                     testCase->name, testCase->message->buffer);
 			}
 		}
 		CuStringAppend(details, "\n!!!FAILURES!!!\n");

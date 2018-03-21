@@ -3,6 +3,13 @@
 
 #include <setjmp.h>
 #include <stdarg.h>
+#include <stdint.h>
+
+#ifdef assert
+#undef assert
+#endif
+void assert(int);
+
 
 #define CUTEST_VERSION  "CuTest 1.5b"
 
@@ -47,7 +54,6 @@ struct CuTest
 	int failed;
 	int ran;
 	CuString *message;
-	jmp_buf *jumpBuf;
 };
 
 void CuTestInit(CuTest* t, const char* name, TestFunction function);
@@ -70,6 +76,18 @@ void CuAssertDblEquals_LineMsg(CuTest* tc,
 void CuAssertPtrEquals_LineMsg(CuTest* tc, 
 	const char* file, int line, const char* message, 
 	void* expected, void* actual);
+void CuAssertRaises_Line(CuTest* tc,
+			 const char* file,
+			 int line,
+			 const char* message,
+			 void (*fn)(void));
+void CuAssertIntArrayEquals_LineMsg(CuTest* tc,
+				    const char* file,
+				    int line,
+				    const char* message,
+				    int* expected,
+				    int* actual,
+				    size_t length);
 
 /* public assert functions */
 
@@ -88,6 +106,18 @@ void CuAssertPtrEquals_LineMsg(CuTest* tc,
 
 #define CuAssertPtrNotNull(tc,p)        CuAssert_Line((tc),__FILE__,__LINE__,"null pointer unexpected",((p) != NULL))
 #define CuAssertPtrNotNullMsg(tc,msg,p) CuAssert_Line((tc),__FILE__,__LINE__,(msg),((p) != NULL))
+
+#define CuAssertIntArrayEquals(tc,ex,ac,len) CuAssertIntArrayEquals_LineMsg((tc),__FILE__,__LINE__,NULL,(ex),(ac),(len))
+#define CuAssertIntArrayEquals_Msg(tc,msg,ex,ac,len) CuAssertIntArrayEquals_LineMsg((tc),__FILE__,__LINE__,(msg),(ex),(ac),(len))
+
+#define CuAssertStructEquals(tc,ex,ac,sz,pp)             CuAssertStructEquals_LineMsg((tc),__FILE__,__LINE__,NULL,SIZE_MAX,ex,ac,sz,pp)
+#define CuAssertStructEquals_Msg(tc,ms,ex,ac,sz,pp)         CuAssertStructEquals_LineMsg((tc),__FILE__,__LINE__,(ms),SIZE_MAX,ex,ac,sz,pp)
+#define CuAssertStructArrayEquals(tc,ex,ac,ne,sz,pp)        CuAssertStructArrayEquals_LineMsg((tc),__FILE__,__LINE__,NULL,(ex),(ac),(ne),(sz),(pp))
+#define CuAssertStructArrayEquals_Msg(tc,ms,ex,ac,sz,pp)    CuAssertStructArrayEquals_LineMsg((tc),__FILE__,__LINE__,(ms),(ex),(ac),(ne),(sz),(pp))
+
+
+#define CuAssertRaises(tc, fn)          CuAssertRaises_Line((tc),__FILE__,__LINE__,NULL,(fn))
+#define CuAssertRaises_Msg(tc, ms, fn)  CuAssertRaises_Line((tc),__FILE__,__LINE__,(ms),(fn))
 
 /* CuSuite */
 
